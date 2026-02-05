@@ -1,5 +1,10 @@
 import java.util.Properties
 import java.io.FileInputStream
+import java.io.ByteArrayOutputStream
+import org.gradle.api.provider.ValueSource
+import org.gradle.api.provider.ValueSourceParameters
+import org.gradle.process.ExecOperations
+import javax.inject.Inject
 
 plugins {
     alias(libs.plugins.android.application)
@@ -7,6 +12,26 @@ plugins {
     alias(libs.plugins.google.services)
     id("com.google.devtools.ksp")
 }
+
+// Configuration-cache compatible version code using ValueSource
+abstract class GitVersionCode @Inject constructor(
+    private val execOperations: ExecOperations
+) : ValueSource<Int, ValueSourceParameters.None> {
+    override fun obtain(): Int {
+        return try {
+            val output = ByteArrayOutputStream()
+            execOperations.exec {
+                commandLine("git", "rev-list", "--count", "HEAD")
+                standardOutput = output
+            }
+            output.toString().trim().toInt()
+        } catch (e: Exception) {
+            1
+        }
+    }
+}
+
+val gitVersionCode = providers.of(GitVersionCode::class) {}.get()
 
 // Load keystore properties
 val keystorePropertiesFile = rootProject.file("keystore.properties")
@@ -16,14 +41,14 @@ if (keystorePropertiesFile.exists()) {
 }
 
 android {
-    namespace = "com.example.mealplanner"
+    namespace = "com.lokosoft.mealplanner"
     compileSdk = 36
 
     defaultConfig {
-        applicationId = "com.example.mealplanner"
+        applicationId = "com.lokosoft.mealplanner"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
+        versionCode = gitVersionCode
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
@@ -48,7 +73,7 @@ android {
 
     buildTypes {
         release {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"
