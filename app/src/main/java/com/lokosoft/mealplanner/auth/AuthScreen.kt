@@ -21,6 +21,7 @@ import com.lokosoft.mealplanner.BuildConfig
 import com.lokosoft.mealplanner.ui.LanguagePickerDialog
 import com.google.android.gms.auth.api.identity.Identity
 
+@Suppress("DEPRECATION")
 @Composable
 fun AuthScreen(
     viewModel: AuthViewModel = viewModel(),
@@ -149,12 +150,20 @@ fun AuthScreen(
             
             Spacer(modifier = Modifier.height(16.dp))
             
-            Text(
-                text = "Build ${BuildConfig.VERSION_CODE} (${BuildConfig.VERSION_NAME})",
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f),
-                textAlign = TextAlign.Center
-            )
+            Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                Text(
+                    text = "Version: ${BuildConfig.VERSION_NAME}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f),
+                    textAlign = TextAlign.Center
+                )
+                Text(
+                    text = "Build: ${BuildConfig.VERSION_CODE}",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.4f),
+                    textAlign = TextAlign.Center
+                )
+            }
         }
     }
 

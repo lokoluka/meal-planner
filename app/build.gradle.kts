@@ -1,10 +1,6 @@
 import java.util.Properties
 import java.io.FileInputStream
-import java.io.ByteArrayOutputStream
-import org.gradle.api.provider.ValueSource
-import org.gradle.api.provider.ValueSourceParameters
-import org.gradle.process.ExecOperations
-import javax.inject.Inject
+import java.io.FileOutputStream
 
 plugins {
     alias(libs.plugins.android.application)
@@ -13,25 +9,27 @@ plugins {
     id("com.google.devtools.ksp")
 }
 
-// Configuration-cache compatible version code using ValueSource
-abstract class GitVersionCode @Inject constructor(
-    private val execOperations: ExecOperations
-) : ValueSource<Int, ValueSourceParameters.None> {
-    override fun obtain(): Int {
-        return try {
-            val output = ByteArrayOutputStream()
-            execOperations.exec {
-                commandLine("git", "rev-list", "--count", "HEAD")
-                standardOutput = output
-            }
-            output.toString().trim().toInt()
-        } catch (e: Exception) {
-            1
-        }
+// Auto-increment build number on each build
+fun getAndIncrementBuildNumber(): Int {
+    val versionPropsFile = file("version.properties")
+    val versionProps = Properties()
+    
+    if (versionPropsFile.exists()) {
+        FileInputStream(versionPropsFile).use { versionProps.load(it) }
     }
+    
+    val currentBuild = versionProps.getProperty("BUILD_NUMBER", "1").toInt()
+    val newBuild = currentBuild + 1
+    
+    versionProps.setProperty("BUILD_NUMBER", newBuild.toString())
+    FileOutputStream(versionPropsFile).use { 
+        versionProps.store(it, "Auto-incremented build number")
+    }
+    
+    return newBuild
 }
 
-val gitVersionCode = providers.of(GitVersionCode::class) {}.get()
+val buildNumber = getAndIncrementBuildNumber()
 
 // Load keystore properties
 val keystorePropertiesFile = rootProject.file("keystore.properties")
@@ -48,7 +46,7 @@ android {
         applicationId = "com.lokosoft.mealplanner"
         minSdk = 26
         targetSdk = 36
-        versionCode = gitVersionCode
+        versionCode = buildNumber
         versionName = "1.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"

@@ -7,18 +7,34 @@
   "client": [
     {
       "client_info": {
-        "mobilesdk_app_id": "1:620624588681:android:625ce91dec218b054d3b58",
+        "mobilesdk_app_id": "1:620624588681:android:ddf63ee602ccff274d3b58",
         "android_client_info": {
-          "package_name": "com.example.mealplanner"
+          "package_name": "com.lokosoft.mealplanner"
         }
       },
       "oauth_client": [
         {
-          "client_id": "620624588681-ajc21av4cu37bcmece1k4vteg7ri0jen.apps.googleusercontent.com",
+          "client_id": "620624588681-98gl69q19updavfaldeaqfbcocv7ajrb.apps.googleusercontent.com",
           "client_type": 1,
           "android_info": {
-            "package_name": "com.example.mealplanner",
-            "certificate_hash": "35192b9d8a0c33789cab182ce3bfd7e9adedb770"
+            "package_name": "com.lokosoft.mealplanner",
+            "certificate_hash": "35192b9d8a0c33789cab182ce3bfd7e9adedb77d"
+          }
+        },
+        {
+          "client_id": "620624588681-at49k89uan0itvigosfcu37ininpb2fb.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.lokosoft.mealplanner",
+            "certificate_hash": "c7f98f6cb405a296aecdf55a8957c559a9e469ca"
+          }
+        },
+        {
+          "client_id": "620624588681-oumo34k1c8s4boa4mjh3lvemfhe8ndbc.apps.googleusercontent.com",
+          "client_type": 1,
+          "android_info": {
+            "package_name": "com.lokosoft.mealplanner",
+            "certificate_hash": "94b618051539797884c91991fb1b7422b16f486c"
           }
         },
         {
