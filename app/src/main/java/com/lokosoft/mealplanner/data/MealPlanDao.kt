@@ -7,6 +7,7 @@ import androidx.room.OnConflictStrategy
 import androidx.room.Query
 import androidx.room.Transaction
 import androidx.room.Update
+import kotlinx.coroutines.flow.Flow
 
 @Dao
 interface MealPlanDao {
@@ -28,8 +29,6 @@ interface MealPlanDao {
         WHERE wp.userId = :userId
         OR wp.weeklyPlanId IN (
             SELECT wpf.weeklyPlanId FROM weekly_plan_family_cross_ref wpf
-            INNER JOIN family_members fm ON wpf.familyId = fm.familyId
-            WHERE fm.userId = :userId
         )
         ORDER BY wp.createdDate DESC
     """)
@@ -54,6 +53,15 @@ interface MealPlanDao {
         ORDER BY createdDate DESC
     """)
     suspend fun getWeeklyPlansForFamily(familyId: Long): List<WeeklyPlan>
+
+    @Query("""
+        SELECT * FROM weekly_plans
+        WHERE weeklyPlanId IN (
+            SELECT weeklyPlanId FROM weekly_plan_family_cross_ref WHERE familyId = :familyId
+        )
+        ORDER BY createdDate DESC
+    """)
+    fun getWeeklyPlansForFamilyFlow(familyId: Long): Flow<List<WeeklyPlan>>
 
     // Weekly Plan Family CrossRef operations
     @Insert(onConflict = OnConflictStrategy.REPLACE)

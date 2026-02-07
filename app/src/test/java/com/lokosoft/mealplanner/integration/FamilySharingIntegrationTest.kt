@@ -72,7 +72,7 @@ class FamilySharingIntegrationTest {
         
         // Step 2: Later, share it with a family
         val family = Family(1L, "New Family", "owner123")
-        val crossRef = WeeklyPlanFamilyCrossRef(plan.weeklyPlanId, family.familyId)
+        WeeklyPlanFamilyCrossRef(plan.weeklyPlanId, family.familyId)
         
         planWithFamilies = WeeklyPlanWithFamilies(plan, listOf(family))
         assertEquals(1, planWithFamilies.families.size)
@@ -183,7 +183,7 @@ class FamilySharingIntegrationTest {
         assertTrue(storedFamilyIds.containsAll(familyIds))
         
         // Verify it would be stored in multiple Firebase paths
-        val userPath = "users/user123/weeklyPlans/${plan.weeklyPlanId}"
+        "users/user123/weeklyPlans/${plan.weeklyPlanId}"
         val familyPaths = familyIds.map { "families/$it/weeklyPlans/${plan.weeklyPlanId}" }
         
         assertEquals(3, familyPaths.size)

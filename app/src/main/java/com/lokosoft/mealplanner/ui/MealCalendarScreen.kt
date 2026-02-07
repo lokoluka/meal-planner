@@ -61,6 +61,7 @@ fun MealCalendarScreen(
                 viewModel.createWeeklyPlan(name, date, commensals) 
             },
             onDeletePlan = { viewModel.deleteWeeklyPlan(it) },
+            viewModel = viewModel,
             onNavigateToFamily = onNavigateToFamily,
             onOpenDrawer = onOpenDrawer,
             modifier = modifier
@@ -82,15 +83,23 @@ fun WeeklyPlanListScreen(
     onPlanClick: (WeeklyPlan) -> Unit,
     onCreatePlan: (String, Long, Int) -> Unit,
     onDeletePlan: (WeeklyPlan) -> Unit,
+    viewModel: MealCalendarViewModel = viewModel(),
     modifier: Modifier = Modifier,
     onNavigateToFamily: () -> Unit = {},
     onOpenDrawer: () -> Unit = {}
 ) {
     val syncViewModel: com.lokosoft.mealplanner.sync.SyncViewModel = viewModel()
     val isSyncing by syncViewModel.isSyncing.collectAsState()
+    val lastSyncTime by syncViewModel.lastSyncTime.collectAsState()
     var showCreateDialog by remember { mutableStateOf(false) }
     var manageFamiliesPlanId by remember { mutableStateOf<Long?>(null) }
     var showLanguageDialog by remember { mutableStateOf(false) }
+
+    LaunchedEffect(lastSyncTime) {
+        if (lastSyncTime != null) {
+            viewModel.loadWeeklyPlans()
+        }
+    }
 
     Scaffold(
         topBar = {

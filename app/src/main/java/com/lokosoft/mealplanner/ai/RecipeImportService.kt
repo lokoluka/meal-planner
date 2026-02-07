@@ -1,158 +1,140 @@
 package com.lokosoft.mealplanner.ai
 
-import com.lokosoft.mealplanner.data.MeasurementUnit
-import com.lokosoft.mealplanner.data.IngredientCategory
 import com.google.ai.client.generativeai.GenerativeModel
-import com.google.ai.client.generativeai.type.generationConfig
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.withContext
-import org.json.JSONArray
-import org.json.JSONObject
+import com.lokosoft.mealplanner.BuildConfig
+import com.lokosoft.mealplanner.data.Ingredient
+import com.lokosoft.mealplanner.data.MeasurementUnit
+import com.lokosoft.mealplanner.data.Recipe
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+import java.util.Locale
 
+
+// Data class to hold ingredient information for the caller
+data class IngredientInfo(val ingredient: Ingredient, val amount: Double, val unit: MeasurementUnit)
+
+// 1. Data classes for parsing the structured recipe data from the Gemini API
+
+/**
+ * Represents a recipe parsed from the Gemini API response. This class is designed to be
+ * easily serializable from JSON.
+ */
+@Serializable
 data class ParsedRecipe(
     val name: String,
-    val instructions: String,
-    val servings: Int,
-    val ingredients: List<ParsedIngredient>
-)
+    val instructions: List<String>,
+    val ingredients: List<ParsedIngredient>,
+    val servings: Int = 1
+) {
+    /**
+     * Converts this parsed recipe into a [Recipe] domain object.
+     */
+    fun toRecipe(): Recipe = Recipe(
+        name = name,
+        instructions = instructions.joinToString(separator = "\n"),
+        servings = servings
+    )
+}
 
+/**
+ * Represents a single ingredient parsed from the Gemini API response.
+ */
+@Serializable
 data class ParsedIngredient(
     val name: String,
     val amount: Double,
     val unit: String,
     val category: String
 ) {
-    fun toMeasurementUnit(): MeasurementUnit {
-        return when (unit.uppercase()) {
-            "GRAM" -> MeasurementUnit.GRAM
-            "MILLILITER" -> MeasurementUnit.MILLILITER
-            "TEASPOON" -> MeasurementUnit.TEASPOON
-            "TABLESPOON" -> MeasurementUnit.TABLESPOON
-            "CUP" -> MeasurementUnit.CUP
-            "PIECE" -> MeasurementUnit.PIECE
-            else -> MeasurementUnit.GRAM
-        }
-    }
-    
-    fun toIngredientCategory(): IngredientCategory {
-        return when (category.uppercase()) {
-            "MEAT" -> IngredientCategory.MEAT
-            "FISH" -> IngredientCategory.FISH
-            "DAIRY" -> IngredientCategory.DAIRY
-            "VEGETABLES" -> IngredientCategory.VEGETABLES
-            "FRUITS" -> IngredientCategory.FRUITS
-            "PANTRY" -> IngredientCategory.PANTRY
-            "SPICES" -> IngredientCategory.SPICES
-            "BEVERAGES" -> IngredientCategory.BEVERAGES
-            else -> IngredientCategory.OTHER
-        }
-    }
-}
-
-class RecipeImportService {
-    
-    // Replace with your Gemini API key
-    // Get one free at: https://makersuite.google.com/app/apikey
-    private val apiKey = "AIzaSyActiSfIx2nYIPsxaPnjjKX7Ucqm5D1Eto"
-    
-    private val modelNames = listOf(
-        "gemini-3-flash-preview"
+    /**
+     * Converts this parsed ingredient into an [Ingredient] domain object.
+     */
+    fun toIngredient(): Ingredient = Ingredient(
+        name = name.lowercase(Locale.getDefault()),
+        // The category is not used in the current implementation but is parsed for future use.
     )
 
-    private fun createModel(modelName: String): GenerativeModel {
-        return GenerativeModel(
-            modelName = modelName,
-            apiKey = apiKey,
-            generationConfig = generationConfig {
-                temperature = 0.2f
-                topK = 1
-                topP = 0.8f
-                maxOutputTokens = 2048
-            }
-        )
+    /**
+     * Converts the string unit from the API response to a [MeasurementUnit] enum.
+     * Defaults to [MeasurementUnit.PIECE] if the unit is unknown.
+     */
+    fun toMeasurementUnit(): MeasurementUnit {
+        return MeasurementUnit.entries.firstOrNull { it.name.equals(unit, ignoreCase = true) } 
+            ?: MeasurementUnit.PIECE
     }
     
-    suspend fun parseRecipe(input: String): Result<ParsedRecipe> = withContext(Dispatchers.IO) {
-        var lastError: Exception? = null
-        val prompt = buildPrompt(input)
-
-        for (modelName in modelNames) {
-            try {
-                val response = createModel(modelName).generateContent(prompt)
-                val jsonText = response.text?.trim()
-                    ?: return@withContext Result.failure(Exception("Empty response"))
-
-                // Extract JSON from markdown code blocks if present
-                val cleanJson = jsonText
-                    .removePrefix("```json")
-                    .removePrefix("```")
-                    .removeSuffix("```")
-                    .trim()
-
-                val recipe = parseJsonResponse(cleanJson)
-                return@withContext Result.success(recipe)
-            } catch (e: Exception) {
-                lastError = e
-            }
-        }
-
-        Result.failure(lastError ?: Exception("Failed to parse recipe"))
+    /**
+     * Converts the string category from the API response to an [IngredientCategory] enum.
+     * Defaults to [IngredientCategory.OTHER] if the category is unknown.
+     */
+    fun toIngredientCategory(): com.lokosoft.mealplanner.data.IngredientCategory {
+        return com.lokosoft.mealplanner.data.IngredientCategory.entries.firstOrNull { 
+            it.name.equals(category, ignoreCase = true) 
+        } ?: com.lokosoft.mealplanner.data.IngredientCategory.OTHER
     }
-    
-    private fun buildPrompt(input: String): String {
-        return """
-You are a recipe parser. Extract the recipe information from the following text or URL content and return it as JSON.
-
-Input:
-$input
-
-Return ONLY a JSON object with this exact structure (no markdown, no extra text):
-{
-  "name": "Recipe name",
-  "instructions": "Cooking instructions",
-  "servings": 4,
-  "ingredients": [
-    {
-      "name": "Ingredient name",
-      "amount": 250.0,
-      "unit": "GRAM",
-      "category": "PANTRY"
-    }
-  ]
 }
 
-Rules:
-- Use these units ONLY: GRAM, MILLILITER, TEASPOON, TABLESPOON, CUP, PIECE
-- Use these categories ONLY: MEAT, FISH, DAIRY, VEGETABLES, FRUITS, PANTRY, SPICES, BEVERAGES, OTHER
-- Convert all measurements to numbers (1/2 = 0.5, 1 1/2 = 1.5)
-- For items like "1 onion", use unit: "PIECE"
-- Normalize ingredient names (e.g., "tomatoes" -> "Tomato")
-- Be precise with amounts and units
-        """.trimIndent()
-    }
-    
-    private fun parseJsonResponse(json: String): ParsedRecipe {
-        val obj = JSONObject(json)
-        
-        val name = obj.getString("name")
-        val instructions = obj.getString("instructions")
-        val servings = obj.getInt("servings")
-        
-        val ingredientsArray = obj.getJSONArray("ingredients")
-        val ingredients = mutableListOf<ParsedIngredient>()
-        
-        for (i in 0 until ingredientsArray.length()) {
-            val ing = ingredientsArray.getJSONObject(i)
-            ingredients.add(
-                ParsedIngredient(
-                    name = ing.getString("name"),
-                    amount = ing.getDouble("amount"),
-                    unit = ing.getString("unit"),
-                    category = ing.getString("category")
+/**
+ * Service class for importing recipes using the Gemini API.
+ *
+ * @property lastError Stores the last error message that occurred during recipe parsing.
+ */
+class RecipeImportService {
+    var lastError: String? = null
+        private set
+
+    /**
+     * Parses a recipe from a given URL or plain text.
+     *
+     * @param text The recipe content (either a URL or plain text).
+     * @return A [Result] containing the [ParsedRecipe], or an error if parsing fails.
+     */
+    suspend fun parseRecipe(text: String): Result<ParsedRecipe> {
+        // 1. Prepare the prompt for the Gemini API
+        val prompt = "You are a master chef with a deep understanding of recipes. " +
+                "Your task is to extract the recipe title, instructions, and a list of ingredients " +
+                "from the provided text. The text could be a just a recipe name or a full recipe. " +
+                "Ensure that each ingredient includes its name, quantity, and measurement unit. " +
+                "Detect the language of the recipe and respond in the same language. " +
+                "Please format the output as a JSON object with the following structure: " +
+                "name (String), instructions (List<String>), ingredients (List<Object> with name, amount, unit, and category), and servings (Int).\n\n" +
+                "For the category, classify each ingredient into one of the following: " +
+                "'DAIRY', 'MEAT', 'VEGETABLE', 'FRUIT', 'SPICE', 'GRAIN', 'LIQUID', 'SWEETENER', or 'OTHER'.\n\n" +
+                "Here is the recipe text:\n$text"
+
+        // 2. Define a list of potential Gemini models to try
+        val model =  "gemini-3-flash-preview"
+
+        // 3. Loop through the models and attempt to generate the recipe
+
+            try {
+                val generativeModel = GenerativeModel(
+                    modelName = model,
+                    apiKey = BuildConfig.GEMINI_API_KEY
                 )
-            )
-        }
+
+                val response = generativeModel.generateContent(prompt)
+
+                response.text?.let { jsonString ->
+                    // 4. Find and parse the JSON part of the response
+                    val startIndex = jsonString.indexOf('{')
+                    val endIndex = jsonString.lastIndexOf('}')
+                    if (startIndex == -1 || endIndex == -1 || startIndex > endIndex) {
+                        throw IllegalStateException("No valid JSON found in the response")
+                    }
+                    val jsonSubstring = jsonString.substring(startIndex, endIndex + 1)
+                    val parsedRecipe = Json.decodeFromString<ParsedRecipe>(jsonSubstring)
+
+                    return Result.success(parsedRecipe)
+                }
+            } catch (e: Exception) {
+                // 6. Store the last error and try the next model
+                lastError = "Error with model $model: ${e.message}"
+                e.printStackTrace() // Log the full stack trace for debugging
+            }
         
-        return ParsedRecipe(name, instructions, servings, ingredients)
+
+        // 7. Return failure if all models fail
+        return Result.failure(Exception(lastError ?: "Failed to parse recipe"))
     }
 }

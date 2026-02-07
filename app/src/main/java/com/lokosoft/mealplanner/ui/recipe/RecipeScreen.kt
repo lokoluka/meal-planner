@@ -528,7 +528,7 @@ fun AddEditRecipeDialog(
     parsedRecipeData: ParsedRecipe? = null
 ) {
     var name by remember { mutableStateOf(parsedRecipeData?.name ?: recipe?.recipe?.name ?: "") }
-    var instructions by remember { mutableStateOf(parsedRecipeData?.instructions ?: recipe?.recipe?.instructions ?: "") }
+    var instructions by remember { mutableStateOf(parsedRecipeData?.instructions?.joinToString("\n") ?: recipe?.recipe?.instructions ?: "") }
     var servings by remember { mutableStateOf(parsedRecipeData?.servings?.toString() ?: recipe?.recipe?.servings?.toString() ?: "1") }
     var ingredients by remember { 
         mutableStateOf<List<IngredientWithAmount>>(
@@ -627,7 +627,7 @@ fun AddEditRecipeDialog(
                     onClick = {
                         ingredients = ingredients + IngredientWithAmount(
                             name = "",
-                            amount = 1.0,
+                            amount = 0.0,
                             unit = MeasurementUnit.PIECE
                         )
                     }
@@ -782,7 +782,6 @@ fun IngredientItem(
                     val amount = if (it.isEmpty()) 0.0 else (it.toDoubleOrNull() ?: ingredient.amount)
                     onIngredientChange(ingredient.copy(amount = amount))
                 },
-                placeholder = { Text(stringResource(R.string.amount_placeholder)) },
                 modifier = Modifier.width(90.dp),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.Number),
                 singleLine = true,

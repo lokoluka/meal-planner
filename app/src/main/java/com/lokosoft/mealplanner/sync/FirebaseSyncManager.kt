@@ -139,6 +139,8 @@ class FirebaseSyncManager(
             
             // Download weekly plans from Firebase
             downloadWeeklyPlans(userId)
+            // Download weekly plans shared with the user's families
+            downloadFamilyWeeklyPlans(userId)
         } catch (e: Exception) {
             Log.e("FirebaseSync", "Error syncing weekly plans", e)
         }
@@ -153,6 +155,7 @@ class FirebaseSyncManager(
             "startDate" to plan.startDate,
             "commensals" to plan.commensals,
             "createdDate" to plan.createdDate,
+            "userId" to plan.userId,
             "familyIds" to familyIds,
             "meals" to mealPlans.map { mealPlan ->
                 hashMapOf(
@@ -220,7 +223,7 @@ class FirebaseSyncManager(
                     val familyIds = doc.get("familyIds") as? List<Long>
                     familyIds?.forEach { familyId ->
                         mealPlanDao.insertWeeklyPlanFamilyCrossRef(
-                            com.lokosoft.mealplanner.data.WeeklyPlanFamilyCrossRef(weeklyPlanId, familyId)
+                            WeeklyPlanFamilyCrossRef(weeklyPlanId, familyId)
                         )
                     }
                     
@@ -254,6 +257,90 @@ class FirebaseSyncManager(
                 }
             } catch (e: Exception) {
                 Log.e("FirebaseSync", "Error downloading weekly plan", e)
+            }
+        }
+    }
+
+    private suspend fun downloadFamilyWeeklyPlans(userId: String) {
+        val familiesSnapshot = firestore.collection("users")
+            .document(userId)
+            .collection("families")
+            .get()
+            .await()
+
+        val familyIds = familiesSnapshot.documents.mapNotNull { doc ->
+            doc.getLong("familyId") ?: doc.id.toLongOrNull()
+        }
+
+        familyIds.forEach { familyId ->
+            val snapshot = firestore.collection("families")
+                .document(familyId.toString())
+                .collection("weeklyPlans")
+                .get()
+                .await()
+
+            snapshot.documents.forEach { doc ->
+                try {
+                    val name = doc.getString("name") ?: return@forEach
+                    val startDate = doc.getLong("startDate") ?: return@forEach
+                    val commensals = doc.getLong("commensals")?.toInt() ?: 2
+                    val createdDate = doc.getLong("createdDate") ?: System.currentTimeMillis()
+                    val planUserId = doc.getString("userId") ?: userId
+
+                    val existingPlans = mealPlanDao.getAllWeeklyPlans()
+                    val existingPlan = existingPlans.find { it.name == name && it.startDate == startDate }
+
+                    val weeklyPlanId = if (existingPlan == null) {
+                        mealPlanDao.insertWeeklyPlan(
+                            WeeklyPlan(
+                                name = name,
+                                startDate = startDate,
+                                commensals = commensals,
+                                userId = planUserId,
+                                createdDate = createdDate
+                            )
+                        )
+                    } else {
+                        existingPlan.weeklyPlanId
+                    }
+
+                    // Ensure cross-ref exists
+                    mealPlanDao.insertWeeklyPlanFamilyCrossRef(
+                        WeeklyPlanFamilyCrossRef(weeklyPlanId, familyId)
+                    )
+
+                    // Add meals if plan is new
+                    if (existingPlan == null) {
+                        @Suppress("UNCHECKED_CAST")
+                        val meals = doc.get("meals") as? List<HashMap<String, Any>>
+                        meals?.forEach { mealData ->
+                            val recipeName = mealData["recipeName"] as? String ?: return@forEach
+                            val dayOfWeekName = mealData["dayOfWeek"] as? String ?: return@forEach
+                            val mealTypeName = mealData["mealType"] as? String ?: return@forEach
+                            val servings = (mealData["servings"] as? Number)?.toInt() ?: 1
+                            val mealCommensals = (mealData["commensals"] as? Number)?.toInt() ?: 2
+
+                            // Find recipe by name
+                            val localRecipes = recipeDao.getRecipesWithIngredients()
+                            val recipe = localRecipes.find { it.recipe.name == recipeName }
+
+                            recipe?.let { recipeWithIngredients ->
+                                mealPlanDao.insertMealPlan(
+                                    MealPlan(
+                                        weeklyPlanId = weeklyPlanId,
+                                        recipeId = recipeWithIngredients.recipe.recipeId,
+                                        dayOfWeek = DayOfWeek.valueOf(dayOfWeekName),
+                                        mealType = MealType.valueOf(mealTypeName),
+                                        servings = servings,
+                                        commensals = mealCommensals
+                                    )
+                                )
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("FirebaseSync", "Error downloading family weekly plan", e)
+                }
             }
         }
     }

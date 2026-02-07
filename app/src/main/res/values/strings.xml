@@ -132,6 +132,7 @@
     <string name="families_title">Families</string>
     <string name="cd_sign_out">Sign out</string>
     <string name="cd_create_family">Create Family</string>
+    <string name="cd_join_family">Join Family</string>
     <string name="no_families_yet">No families yet</string>
     <string name="no_families_subtitle">Create a family to share meal plans with others</string>
     <string name="sign_out_title">Sign out</string>
@@ -145,6 +146,7 @@
     <string name="create_family_prompt">Enter a name for your family</string>
     <string name="family_name_label">Family Name</string>
     <string name="cd_add_member">Add Member</string>
+    <string name="cd_create_invite">Create Invite Code</string>
     <string name="family_information">Family Information</string>
     <string name="members_count_line">Members: %1$d</string>
     <string name="created_on">Created: %1$s</string>
@@ -160,6 +162,15 @@
     <string name="add_member_title">Add Member</string>
     <string name="add_member_prompt">Enter the email address of the person you want to invite</string>
     <string name="email_label">Email</string>
+    <string name="join_family_title">Join Family</string>
+    <string name="join_family_prompt">Enter the invite code to join a family</string>
+    <string name="invite_code_label">Invite code</string>
+    <string name="join">Join</string>
+    <string name="invite_code_title">Invite Code</string>
+    <string name="invite_code_prompt">Share this code with your family member</string>
+    <string name="generating_code">Generating code...</string>
+    <string name="no_invite_code">Invite code not available</string>
+    <string name="copy">Copy</string>
     <string name="language_title">Language</string>
     <string name="language_system">System default</string>
     <string name="language_english">English</string>

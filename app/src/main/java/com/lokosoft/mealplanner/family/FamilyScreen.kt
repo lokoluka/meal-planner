@@ -11,8 +11,10 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.res.stringResource
+import androidx.compose.ui.text.AnnotatedString
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.LocalClipboardManager
 import androidx.lifecycle.viewmodel.compose.viewModel
 import com.lokosoft.mealplanner.R
 import com.lokosoft.mealplanner.ui.LanguagePickerDialog
@@ -36,9 +38,7 @@ fun FamilyScreen(
     val authViewModel: AuthViewModel = viewModel()
     
     if (selectedFamily == null) {
-        var showPlans by remember { mutableStateOf(false) }
         val familyViewModel: FamilyViewModel = viewModel()
-        val familyPlans by familyViewModel.familyPlans.collectAsState()
         FamilyListScreen(
             families = families,
             isLoading = isLoading,
@@ -46,6 +46,7 @@ fun FamilyScreen(
             onFamilyClick = { viewModel.selectFamily(it.family.familyId) },
             onCreateFamily = { viewModel.createFamily(it) },
             onDeleteFamily = { viewModel.deleteFamily(it) },
+            onJoinFamily = { viewModel.joinFamilyWithCode(it) },
             onBack = onBack,
             onSignOut = { authViewModel.signOut() },
             modifier = modifier
@@ -56,7 +57,7 @@ fun FamilyScreen(
             isLoading = isLoading,
             errorMessage = errorMessage,
             onBack = { viewModel.deselectFamily() },
-            onAddMember = { viewModel.addMember(selectedFamily!!.family.familyId, it) },
+            onCreateInvite = { viewModel.createInviteCode(selectedFamily!!.family.familyId) },
             onRemoveMember = { viewModel.removeMember(it) },
             onSignOut = { authViewModel.signOut() },
             modifier = modifier
@@ -73,11 +74,13 @@ fun FamilyListScreen(
     onFamilyClick: (FamilyWithMembers) -> Unit,
     onCreateFamily: (String) -> Unit,
     onDeleteFamily: (Family) -> Unit,
+    onJoinFamily: (String) -> Unit,
     onBack: () -> Unit,
     onSignOut: () -> Unit,
     modifier: Modifier = Modifier
 ) {
     var showCreateDialog by remember { mutableStateOf(false) }
+    var showJoinDialog by remember { mutableStateOf(false) }
     var showSignOutDialog by remember { mutableStateOf(false) }
     var showLanguageDialog by remember { mutableStateOf(false) }
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid
@@ -92,6 +95,9 @@ fun FamilyListScreen(
                     }
                 },
                 actions = {
+                    IconButton(onClick = { showJoinDialog = true }) {
+                        Icon(Icons.Default.Add, contentDescription = stringResource(R.string.cd_join_family))
+                    }
                 }
             )
 
@@ -195,6 +201,16 @@ fun FamilyListScreen(
             onCreate = { name ->
                 onCreateFamily(name)
                 showCreateDialog = false
+            }
+        )
+    }
+
+    if (showJoinDialog) {
+        JoinFamilyDialog(
+            onDismiss = { showJoinDialog = false },
+            onJoin = { code ->
+                onJoinFamily(code)
+                showJoinDialog = false
             }
         )
     }
@@ -324,20 +340,22 @@ fun FamilyDetailScreen(
     isLoading: Boolean,
     errorMessage: String?,
     onBack: () -> Unit,
-    onAddMember: (String) -> Unit,
+    onCreateInvite: () -> Unit,
     onRemoveMember: (FamilyMember) -> Unit,
     onSignOut: () -> Unit,
     modifier: Modifier = Modifier
 ) {
-    var showAddDialog by remember { mutableStateOf(false) }
+    var showInviteDialog by remember { mutableStateOf(false) }
     var showPlans by remember { mutableStateOf(false) }
     var showSignOutDialog by remember { mutableStateOf(false) }
     var showLanguageDialog by remember { mutableStateOf(false) }
     val familyViewModel: FamilyViewModel = viewModel()
     val familyPlans by familyViewModel.familyPlans.collectAsState()
+    val inviteCode by familyViewModel.inviteCode.collectAsState()
     val currentUserId = FirebaseAuth.getInstance().currentUser?.uid
     val isOwner = family.family.ownerId == currentUserId
     val dateFormat = remember { java.text.SimpleDateFormat("MMM dd, yyyy", java.util.Locale.getDefault()) }
+    val clipboardManager = LocalClipboardManager.current
     
     Scaffold(
         topBar = {
@@ -355,9 +373,12 @@ fun FamilyDetailScreen(
         floatingActionButton = {
             if (isOwner) {
                 FloatingActionButton(
-                    onClick = { showAddDialog = true }
+                    onClick = {
+                        onCreateInvite()
+                        showInviteDialog = true
+                    }
                 ) {
-                    Icon(Icons.Default.Add, contentDescription = stringResource(R.string.cd_add_member))
+                    Icon(Icons.Default.Share, contentDescription = stringResource(R.string.cd_create_invite))
                 }
             }
         },
@@ -488,12 +509,16 @@ fun FamilyDetailScreen(
         }
     }
     
-    if (showAddDialog) {
-        AddMemberDialog(
-            onDismiss = { showAddDialog = false },
-            onAdd = { email ->
-                onAddMember(email)
-                showAddDialog = false
+    if (showInviteDialog) {
+        InviteCodeDialog(
+            code = inviteCode,
+            isLoading = isLoading,
+            onCopy = { code ->
+                clipboardManager.setText(AnnotatedString(code))
+            },
+            onDismiss = {
+                showInviteDialog = false
+                familyViewModel.clearInviteCode()
             }
         )
     }
@@ -571,23 +596,23 @@ fun MemberCard(
 }
 
 @Composable
-fun AddMemberDialog(
+fun JoinFamilyDialog(
     onDismiss: () -> Unit,
-    onAdd: (String) -> Unit
+    onJoin: (String) -> Unit
 ) {
-    var email by remember { mutableStateOf("") }
-    
+    var inviteCode by remember { mutableStateOf("") }
+
     AlertDialog(
         onDismissRequest = onDismiss,
-        title = { Text(stringResource(R.string.add_member_title)) },
+        title = { Text(stringResource(R.string.join_family_title)) },
         text = {
             Column {
-                Text(stringResource(R.string.add_member_prompt))
+                Text(stringResource(R.string.join_family_prompt))
                 Spacer(modifier = Modifier.height(8.dp))
                 OutlinedTextField(
-                    value = email,
-                    onValueChange = { email = it },
-                    label = { Text(stringResource(R.string.email_label)) },
+                    value = inviteCode,
+                    onValueChange = { inviteCode = it },
+                    label = { Text(stringResource(R.string.invite_code_label)) },
                     singleLine = true,
                     modifier = Modifier.fillMaxWidth()
                 )
@@ -595,15 +620,59 @@ fun AddMemberDialog(
         },
         confirmButton = {
             TextButton(
-                onClick = { onAdd(email) },
-                enabled = email.isNotBlank() && android.util.Patterns.EMAIL_ADDRESS.matcher(email).matches()
+                onClick = { onJoin(inviteCode) },
+                enabled = inviteCode.isNotBlank()
             ) {
-                Text(stringResource(R.string.add))
+                Text(stringResource(R.string.join))
             }
         },
         dismissButton = {
             TextButton(onClick = onDismiss) {
-                    Text(stringResource(R.string.cancel))
+                Text(stringResource(R.string.cancel))
+            }
+        }
+    )
+}
+
+@Composable
+fun InviteCodeDialog(
+    code: String?,
+    isLoading: Boolean,
+    onCopy: (String) -> Unit,
+    onDismiss: () -> Unit
+) {
+    AlertDialog(
+        onDismissRequest = onDismiss,
+        title = { Text(stringResource(R.string.invite_code_title)) },
+        text = {
+            Column {
+                Text(stringResource(R.string.invite_code_prompt))
+                Spacer(modifier = Modifier.height(12.dp))
+                if (code.isNullOrBlank()) {
+                    Text(
+                        text = if (isLoading) stringResource(R.string.generating_code) else stringResource(R.string.no_invite_code),
+                        style = MaterialTheme.typography.bodyMedium
+                    )
+                } else {
+                    Text(
+                        text = code,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+            }
+        },
+        confirmButton = {
+            TextButton(
+                onClick = { if (!code.isNullOrBlank()) onCopy(code) },
+                enabled = !code.isNullOrBlank()
+            ) {
+                Text(stringResource(R.string.copy))
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text(stringResource(R.string.close))
             }
         }
     )
