@@ -121,12 +121,30 @@ class MealCalendarViewModel(application: Application) : AndroidViewModel(applica
 
     fun deleteWeeklyPlan(weeklyPlan: WeeklyPlan) {
         viewModelScope.launch {
+            val userId = FirebaseAuth.getInstance().currentUser?.uid ?: return@launch
+
+            try {
+                // Try to delete remote copies first
+                syncManager.deleteWeeklyPlanFromFirebase(userId, weeklyPlan)
+            } catch (e: Exception) {
+                // log but proceed to delete local copy
+                android.util.Log.e("MealCalendarVM", "Failed to delete weekly plan from Firebase", e)
+            }
+
+            // Delete local copy
             mealPlanDao.deleteWeeklyPlan(weeklyPlan)
             if (_currentWeeklyPlanId.value == weeklyPlan.weeklyPlanId) {
                 _currentWeeklyPlanId.value = null
                 _mealPlans.value = emptyMap()
             }
             loadWeeklyPlans()
+
+            // Trigger a sync to reconcile any remaining cloud artifacts
+            try {
+                syncManager.syncWeeklyPlans()
+            } catch (e: Exception) {
+                android.util.Log.e("MealCalendarVM", "Sync failed after delete", e)
+            }
         }
     }
 
@@ -182,6 +200,14 @@ class MealCalendarViewModel(application: Application) : AndroidViewModel(applica
             )
             
             loadMealPlansForWeek(weeklyPlanId)
+
+            // Trigger immediate sync for weekly plans after assigning a recipe
+            try {
+                android.util.Log.d("MealCalendarVM", "Assigned recipe $recipeId to weeklyPlan $weeklyPlanId - triggering sync")
+                syncManager.syncWeeklyPlans()
+            } catch (e: Exception) {
+                android.util.Log.e("MealCalendarVM", "Failed to sync after assignRecipeToMeal", e)
+            }
         }
     }
 

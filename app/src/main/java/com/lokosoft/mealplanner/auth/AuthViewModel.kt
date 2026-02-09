@@ -14,6 +14,8 @@ import com.google.android.gms.auth.api.identity.SignInClient
 import com.google.firebase.auth.FirebaseAuth
 import com.google.firebase.auth.FirebaseUser
 import com.google.firebase.auth.GoogleAuthProvider
+import com.google.firebase.firestore.FirebaseFirestore
+import com.google.firebase.firestore.SetOptions
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.launch
@@ -28,6 +30,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     private val migrationManager = DataMigrationManager(
         recipeDao = AppDatabase.getDatabase(application).recipeDao()
     )
+
+    private val firestore: FirebaseFirestore = FirebaseFirestore.getInstance()
     
     // You need to get this from Firebase Console -> Authentication -> Sign-in method -> Google -> Web SDK configuration
     private val webClientId = "620624588681-frmrvdsiris9q75g7fl3qji8ao1s1ck2.apps.googleusercontent.com"
@@ -50,7 +54,11 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     
     init {
         auth.addAuthStateListener { firebaseAuth ->
-            _currentUser.value = firebaseAuth.currentUser
+            val user = firebaseAuth.currentUser
+            _currentUser.value = user
+            if (user != null && !user.isAnonymous) {
+                createUserDocumentIfNotExists(user)
+            }
         }
     }
     
@@ -63,6 +71,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                 .addOnSuccessListener { result ->
                     _currentUser.value = result.user
                     _isLoading.value = false
+                    // Ensure user document exists in Firestore for authenticated users
+                    createUserDocumentIfNotExists(result.user)
                 }
                 .addOnFailureListener { exception ->
                     _errorMessage.value = exception.message
@@ -122,6 +132,8 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
                     if (wasAnonymous) {
                         checkAndPromptForMigration()
                     }
+                    // Ensure user document exists in Firestore for authenticated users
+                    createUserDocumentIfNotExists(result.user)
                 }
                 .addOnFailureListener { exception ->
                     _errorMessage.value = exception.message
@@ -163,5 +175,47 @@ class AuthViewModel(application: Application) : AndroidViewModel(application) {
     
     fun clearError() {
         _errorMessage.value = null
+    }
+
+    /**
+     * Public helper to ensure the current authenticated user's document exists.
+     * Useful for debugging and manual verification from UI.
+     */
+    fun ensureUserDocumentForCurrentUser() {
+        createUserDocumentIfNotExists(_currentUser.value)
+    }
+
+    private fun createUserDocumentIfNotExists(user: FirebaseUser?) {
+        if (user == null || user.isAnonymous) return
+
+        try {
+            val docRef = firestore.collection("users").document(user.uid)
+            docRef.get()
+                .addOnSuccessListener { snapshot ->
+                    if (!snapshot.exists()) {
+                        val data = hashMapOf(
+                            "uid" to user.uid,
+                            "email" to user.email,
+                            "displayName" to (user.displayName ?: ""),
+                            "createdAt" to System.currentTimeMillis()
+                        )
+                        docRef.set(data, SetOptions.merge())
+                            .addOnSuccessListener {
+                                android.util.Log.d("AuthViewModel", "User document created for ${user.uid}")
+                            }
+                            .addOnFailureListener { e ->
+                                android.util.Log.e("AuthViewModel", "Failed to create user doc", e)
+                            }
+                    } else {
+                        android.util.Log.d("AuthViewModel", "User document already exists for ${user.uid}")
+                    }
+                }
+                .addOnFailureListener { e ->
+                    // Log but don't block sign-in flow
+                    android.util.Log.e("AuthViewModel", "Failed to ensure user doc", e)
+                }
+        } catch (e: Exception) {
+            android.util.Log.e("AuthViewModel", "Exception while creating user doc", e)
+        }
     }
 }

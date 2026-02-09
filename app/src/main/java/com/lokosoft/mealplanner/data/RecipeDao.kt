@@ -78,6 +78,10 @@ interface RecipeDao {
     suspend fun getRecipesWithIngredients(): List<RecipeWithIngredients>
 
     @Transaction
+    @Query("SELECT * FROM recipes")
+    fun getRecipesWithIngredientsFlow(): kotlinx.coroutines.flow.Flow<List<RecipeWithIngredients>>
+
+    @Transaction
     @Query("SELECT * FROM recipes WHERE recipeId = :recipeId")
     suspend fun getRecipeWithIngredientsById(recipeId: Long): RecipeWithIngredients?
 

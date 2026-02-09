@@ -19,16 +19,19 @@ class FirebaseSyncManager(
     // Sync Recipes
     suspend fun syncRecipes() {
         val userId = getUserId() ?: return
+        Log.d("FirebaseSync", "Starting syncRecipes for user=$userId")
         
         try {
             // Upload local recipes to Firebase
             val localRecipes = recipeDao.getRecipesWithIngredients()
+            Log.d("FirebaseSync", "Uploading ${'$'}{localRecipes.size} local recipes for user=$userId")
             localRecipes.forEach { recipeWithIngredients ->
                 uploadRecipe(userId, recipeWithIngredients)
             }
             
             // Download recipes from Firebase
             downloadRecipes(userId)
+            Log.d("FirebaseSync", "Completed syncRecipes for user=$userId")
         } catch (e: Exception) {
             Log.e("FirebaseSync", "Error syncing recipes", e)
         }
@@ -129,10 +132,12 @@ class FirebaseSyncManager(
     // Sync Weekly Plans
     suspend fun syncWeeklyPlans() {
         val userId = getUserId() ?: return
+        Log.d("FirebaseSync", "Starting syncWeeklyPlans for user=$userId")
         
         try {
             // Upload local weekly plans
             val localPlans = mealPlanDao.getAllWeeklyPlans()
+            Log.d("FirebaseSync", "Uploading ${'$'}{localPlans.size} weekly plans for user=$userId")
             localPlans.forEach { plan ->
                 uploadWeeklyPlan(userId, plan)
             }
@@ -141,8 +146,91 @@ class FirebaseSyncManager(
             downloadWeeklyPlans(userId)
             // Download weekly plans shared with the user's families
             downloadFamilyWeeklyPlans(userId)
+            Log.d("FirebaseSync", "Completed syncWeeklyPlans for user=$userId")
         } catch (e: Exception) {
             Log.e("FirebaseSync", "Error syncing weekly plans", e)
+        }
+    }
+
+    /**
+     * Delete weekly plan from Firebase. Tries to remove by id and by matching
+     * name/startDate across user's collection and family's collections.
+     */
+    suspend fun deleteWeeklyPlanFromFirebase(userId: String, plan: com.lokosoft.mealplanner.data.WeeklyPlan) {
+        try {
+            // Delete by doc id (if it was uploaded with local id as doc id)
+            firestore.collection("users")
+                .document(userId)
+                .collection("weeklyPlans")
+                .document(plan.weeklyPlanId.toString())
+                .delete()
+                .await()
+            Log.d("FirebaseSync", "Deleted user weeklyPlan doc id=${plan.weeklyPlanId} for user=$userId (by id)")
+        } catch (e: Exception) {
+            Log.d("FirebaseSync", "No user doc deleted by id for weeklyPlanId=${plan.weeklyPlanId}: ${e.message}")
+        }
+
+        try {
+            // Also attempt to delete by matching name and startDate in user's collection
+            val snapshot = firestore.collection("users")
+                .document(userId)
+                .collection("weeklyPlans")
+                .whereEqualTo("name", plan.name)
+                .whereEqualTo("startDate", plan.startDate)
+                .get()
+                .await()
+
+            snapshot.documents.forEach { doc ->
+                try {
+                    doc.reference.delete().await()
+                    Log.d("FirebaseSync", "Deleted user weeklyPlan doc ${doc.id} by name/startDate for user=$userId")
+                } catch (e: Exception) {
+                    Log.e("FirebaseSync", "Failed to delete user weeklyPlan doc ${doc.id}", e)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("FirebaseSync", "Error querying user weeklyPlans for deletion", e)
+        }
+
+        // Delete from family collections
+        try {
+            val familyIds = mealPlanDao.getFamilyIdsForWeeklyPlan(plan.weeklyPlanId)
+            familyIds.forEach { familyId ->
+                try {
+                    firestore.collection("families")
+                        .document(familyId.toString())
+                        .collection("weeklyPlans")
+                        .document(plan.weeklyPlanId.toString())
+                        .delete()
+                        .await()
+                    Log.d("FirebaseSync", "Deleted family weeklyPlan doc id=${plan.weeklyPlanId} in family=$familyId (by id)")
+                } catch (e: Exception) {
+                    Log.d("FirebaseSync", "No family doc deleted by id for weeklyPlanId=${plan.weeklyPlanId} in family=$familyId: ${e.message}")
+                }
+
+                try {
+                    val snapFam = firestore.collection("families")
+                        .document(familyId.toString())
+                        .collection("weeklyPlans")
+                        .whereEqualTo("name", plan.name)
+                        .whereEqualTo("startDate", plan.startDate)
+                        .get()
+                        .await()
+
+                    snapFam.documents.forEach { doc ->
+                        try {
+                            doc.reference.delete().await()
+                            Log.d("FirebaseSync", "Deleted family weeklyPlan doc ${doc.id} by name/startDate in family=$familyId")
+                        } catch (e: Exception) {
+                            Log.e("FirebaseSync", "Failed to delete family weeklyPlan doc ${doc.id} in family=$familyId", e)
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("FirebaseSync", "Error querying family weeklyPlans for deletion in family=$familyId", e)
+                }
+            }
+        } catch (e: Exception) {
+            Log.e("FirebaseSync", "Error fetching family ids for weeklyPlanId=${plan.weeklyPlanId}", e)
         }
     }
     

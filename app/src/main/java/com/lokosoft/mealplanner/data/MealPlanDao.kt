@@ -23,6 +23,9 @@ interface MealPlanDao {
 
     @Query("SELECT * FROM weekly_plans ORDER BY createdDate DESC")
     suspend fun getAllWeeklyPlans(): List<WeeklyPlan>
+
+    @Query("SELECT * FROM weekly_plans ORDER BY createdDate DESC")
+    fun getAllWeeklyPlansFlow(): kotlinx.coroutines.flow.Flow<List<WeeklyPlan>>
     
     @Query("""
         SELECT DISTINCT wp.* FROM weekly_plans wp
@@ -100,6 +103,10 @@ interface MealPlanDao {
     @Transaction
     @Query("SELECT * FROM meal_plans WHERE weeklyPlanId = :weeklyPlanId")
     suspend fun getMealPlansByWeeklyPlan(weeklyPlanId: Long): List<MealPlanWithRecipe>
+
+    @Transaction
+    @Query("SELECT * FROM meal_plans WHERE weeklyPlanId = :weeklyPlanId")
+    fun getMealPlansByWeeklyPlanFlow(weeklyPlanId: Long): kotlinx.coroutines.flow.Flow<List<MealPlanWithRecipe>>
 
     @Transaction
     @Query("SELECT * FROM meal_plans WHERE weeklyPlanId = :weeklyPlanId AND dayOfWeek = :dayOfWeek")

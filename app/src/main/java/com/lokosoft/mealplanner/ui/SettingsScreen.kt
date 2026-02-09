@@ -16,6 +16,12 @@ import com.lokosoft.mealplanner.R
 import com.lokosoft.mealplanner.auth.AuthViewModel
 import com.lokosoft.mealplanner.ui.calendar.MealCalendarViewModel
 import com.lokosoft.mealplanner.ui.recipe.RecipeViewModel
+import com.lokosoft.mealplanner.sync.SyncViewModel
+import androidx.compose.material3.Button
+import androidx.compose.material3.OutlinedButton
+import androidx.compose.ui.Alignment
+import androidx.compose.ui.unit.dp
+import androidx.compose.ui.text.font.FontWeight
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -111,6 +117,47 @@ fun SettingsScreen(
                 },
                 modifier = Modifier.clickable { showSignOutDialog = true }
             )
+
+            HorizontalDivider()
+
+            // Debug section
+            val syncViewModel: SyncViewModel = viewModel()
+            val isSyncing by syncViewModel.isSyncing.collectAsState()
+            val lastSyncTime by syncViewModel.lastSyncTime.collectAsState()
+            val syncError by syncViewModel.syncError.collectAsState()
+            val currentUser by authViewModel.currentUser.collectAsState()
+            val recipes by recipeViewModel.recipes.collectAsState()
+            val plans by calendarViewModel.weeklyPlans.collectAsState()
+
+            Column(modifier = Modifier.padding(16.dp)) {
+                val userId = currentUser?.uid ?: "(none)"
+                val emailText = currentUser?.email ?: "(none)"
+                val isAnon = currentUser?.isAnonymous ?: false
+                val lastSyncText = lastSyncTime?.toString() ?: "(never)"
+                val syncErrorText = syncError ?: "(none)"
+
+                Text("Debug", fontWeight = FontWeight.Bold)
+                Spacer(Modifier.height(8.dp))
+                Text("User: $userId")
+                Text("Email: $emailText")
+                Text("Anonymous: $isAnon")
+                Spacer(Modifier.height(8.dp))
+                Text("Local recipes: ${recipes.size}")
+                Text("Local weekly plans: ${plans.size}")
+                Spacer(Modifier.height(8.dp))
+                Text("Syncing: $isSyncing")
+                Text("Last sync: $lastSyncText")
+                Text("Sync error: $syncErrorText")
+                Spacer(Modifier.height(8.dp))
+                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                    Button(onClick = { syncViewModel.syncNow() }) {
+                        Text("Force sync")
+                    }
+                    OutlinedButton(onClick = { authViewModel.ensureUserDocumentForCurrentUser() }) {
+                        Text("Ensure user doc")
+                    }
+                }
+            }
         }
         
         // Demo Data Dialog

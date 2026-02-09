@@ -231,11 +231,13 @@ class FirebaseRecipeRepository(
      */
     private suspend fun syncFromFirebase(userId: String) {
         try {
+            Log.d("FirebaseRecipeRepo", "Starting syncFromFirebase for user=$userId")
             val snapshot = firestore.collection("users")
                 .document(userId)
                 .collection("recipes")
                 .get()
                 .await()
+            Log.d("FirebaseRecipeRepo", "Fetched ${snapshot.size()} recipe documents from Firestore for user=$userId")
             
             snapshot.documents.forEach { doc ->
                 try {
@@ -253,6 +255,7 @@ class FirebaseRecipeRepository(
                     }
                     
                     if (!exists) {
+                        Log.d("FirebaseRecipeRepo", "Inserting recipe from Firebase: name=$name, firebaseId=$firebaseRecipeId")
                         val recipeId = recipeDao.insertRecipe(
                             Recipe(name = name, instructions = instructions, servings = servings)
                         )
@@ -279,11 +282,14 @@ class FirebaseRecipeRepository(
                                 RecipeIngredientCrossRef(recipeId, ingredientId, amount, unit)
                             )
                         }
+                    } else {
+                        Log.d("FirebaseRecipeRepo", "Recipe already exists locally: name=$name")
                     }
                 } catch (e: Exception) {
                     Log.e("FirebaseRecipeRepo", "Error processing recipe document", e)
                 }
             }
+            Log.d("FirebaseRecipeRepo", "Completed syncFromFirebase for user=$userId")
         } catch (e: Exception) {
             Log.e("FirebaseRecipeRepo", "Error syncing from Firebase", e)
             throw e
