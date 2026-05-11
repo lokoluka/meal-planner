@@ -46,6 +46,7 @@ fun AppRoot() {
     // When auth state changes, notify RecipeViewModel to switch repository and sync
     LaunchedEffect(currentUser) {
         recipeViewModel.onAuthStateChanged()
+        syncViewModel.onAuthStateChanged()
         // Trigger an immediate sync when a user becomes authenticated
         if (currentUser != null && currentUser?.isAnonymous == false) {
             syncViewModel.syncNow()

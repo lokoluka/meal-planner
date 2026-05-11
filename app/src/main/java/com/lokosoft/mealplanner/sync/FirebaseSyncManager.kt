@@ -13,6 +13,22 @@ class FirebaseSyncManager(
 ) {
     private val firestore = FirebaseFirestore.getInstance()
     private val auth = FirebaseAuth.getInstance()
+
+    companion object {
+        private val pendingRecipeDeletes = mutableSetOf<Long>()
+
+        fun markPendingRecipeDelete(recipeId: Long) {
+            pendingRecipeDeletes.add(recipeId)
+        }
+
+        fun clearPendingRecipeDelete(recipeId: Long) {
+            pendingRecipeDeletes.remove(recipeId)
+        }
+
+        fun isPendingRecipeDelete(recipeId: Long): Boolean {
+            return pendingRecipeDeletes.contains(recipeId)
+        }
+    }
     
     private fun getUserId(): String? = auth.currentUser?.uid
     
@@ -24,9 +40,14 @@ class FirebaseSyncManager(
         try {
             // Upload local recipes to Firebase
             val localRecipes = recipeDao.getRecipesWithIngredients()
-            Log.d("FirebaseSync", "Uploading ${'$'}{localRecipes.size} local recipes for user=$userId")
+            Log.d("FirebaseSync", "Uploading ${localRecipes.size} local recipes for user=$userId")
             localRecipes.forEach { recipeWithIngredients ->
-                uploadRecipe(userId, recipeWithIngredients)
+                if (isPendingRecipeDelete(recipeWithIngredients.recipe.recipeId)) {
+                    Log.d("FirebaseSync", "Skipping upload for pending delete recipeId=${recipeWithIngredients.recipe.recipeId}")
+                } else {
+                    uploadRecipe(userId, recipeWithIngredients)
+                    Log.d("FirebaseSync", "Uploaded recipe ${recipeWithIngredients.recipe.name} (id=${recipeWithIngredients.recipe.recipeId}) for user=$userId")
+                }
             }
             
             // Download recipes from Firebase
@@ -63,16 +84,20 @@ class FirebaseSyncManager(
             .await()
     }
     
-    suspend fun deleteRecipeFromFirebase(userId: String, recipeId: Long) {
+    suspend fun deleteRecipeFromFirebase(userId: String, recipeId: Long): Boolean {
         try {
+            Log.d("FirebaseSync", "Attempting to delete recipe with ID: $recipeId from Firebase for user: $userId")
             firestore.collection("users")
                 .document(userId)
                 .collection("recipes")
                 .document(recipeId.toString())
                 .delete()
                 .await()
+            Log.d("FirebaseSync", "Successfully deleted recipe with ID: $recipeId from Firebase for user: $userId")
+            return true
         } catch (e: Exception) {
-            Log.e("FirebaseSync", "Error deleting recipe from Firebase", e)
+            Log.e("FirebaseSync", "Error deleting recipe with ID: $recipeId from Firebase for user: $userId", e)
+            return false
         }
     }
     
@@ -82,49 +107,105 @@ class FirebaseSyncManager(
             .collection("recipes")
             .get()
             .await()
-        
+
+        val firebaseRecipeIds = mutableSetOf<Long>()
+        val existingRecipes = recipeDao.getRecipesWithIngredients()
+        val recipesById = existingRecipes.associateBy { it.recipe.recipeId }
+        val recipesByName = existingRecipes.associateBy { it.recipe.name.trim().lowercase() }
+
         snapshot.documents.forEach { doc ->
             try {
                 val firebaseRecipeId = doc.getLong("recipeId")
                 val name = doc.getString("name") ?: return@forEach
                 val instructions = doc.getString("instructions") ?: ""
                 val servings = doc.getLong("servings")?.toInt() ?: 1
-                
-                // Check if recipe already exists locally by recipeId (if available) or name
-                val existingRecipes = recipeDao.getRecipesWithIngredients()
-                val exists = if (firebaseRecipeId != null) {
-                    existingRecipes.any { it.recipe.recipeId == firebaseRecipeId }
-                } else {
-                    existingRecipes.any { it.recipe.name == name }
+                val nameKey = name.trim().lowercase()
+
+                if (firebaseRecipeId != null) {
+                    firebaseRecipeIds.add(firebaseRecipeId)
                 }
-                
-                if (!exists) {
-                    val recipeId = recipeDao.insertRecipe(
-                        Recipe(name = name, instructions = instructions, servings = servings)
+
+                val recipeIdToUse = when {
+                    firebaseRecipeId != null -> firebaseRecipeId
+                    recipesByName.containsKey(nameKey) -> recipesByName.getValue(nameKey).recipe.recipeId
+                    else -> 0L
+                }
+
+                Log.d("FirebaseSync", "Upserting recipe from Firebase: name=$name, firebaseId=$firebaseRecipeId, localId=$recipeIdToUse")
+
+                val effectiveRecipeId = if (recipeIdToUse != 0L) {
+                    recipeDao.updateRecipe(
+                        Recipe(
+                            recipeId = recipeIdToUse,
+                            name = name,
+                            instructions = instructions,
+                            servings = servings
+                        )
                     )
-                    
-                    // Add ingredients
-                    @Suppress("UNCHECKED_CAST")
-                    val ingredients = doc.get("ingredients") as? List<HashMap<String, Any>>
-                    ingredients?.forEach { ingData ->
-                        val ingName = ingData["name"] as? String ?: return@forEach
-                        val amount = (ingData["amount"] as? Number)?.toDouble() ?: 0.0
-                        val unitName = ingData["unit"] as? String ?: "GRAM"
-                        val unit = MeasurementUnit.valueOf(unitName)
-                        
-                        // Get or create ingredient
-                        var ingredientId = recipeDao.getIngredientByName(ingName)?.ingredientId
-                        if (ingredientId == null) {
-                            ingredientId = recipeDao.insertIngredient(Ingredient(name = ingName))
-                        }
-                        
-                        recipeDao.insertRecipeIngredientCrossRef(
-                            RecipeIngredientCrossRef(recipeId, ingredientId, amount, unit)
+                    Log.d("FirebaseSync", "Updated existing recipe with ID: $recipeIdToUse for name: $name")
+                    recipeIdToUse
+                } else {
+                    val insertedId = recipeDao.insertRecipe(
+                        Recipe(
+                            name = name,
+                            instructions = instructions,
+                            servings = servings
+                        )
+                    )
+                    Log.d("FirebaseSync", "Inserted new recipe for name: $name with generated ID=$insertedId")
+                    insertedId
+                }
+
+                if (recipeIdToUse != 0L || recipesById.containsKey(effectiveRecipeId)) {
+                    recipeDao.deleteRecipeIngredients(effectiveRecipeId)
+                }
+
+                // Add ingredients
+                @Suppress("UNCHECKED_CAST")
+                val ingredients = doc.get("ingredients") as? List<HashMap<String, Any>>
+                ingredients?.forEach { ingData ->
+                    val ingName = ingData["name"] as? String ?: return@forEach
+                    val amount = (ingData["amount"] as? Number)?.toDouble() ?: 0.0
+                    val unitName = ingData["unit"] as? String ?: "GRAM"
+                    val unit = try {
+                        MeasurementUnit.valueOf(unitName)
+                    } catch (e: Exception) {
+                        MeasurementUnit.GRAM
+                    }
+                    val categoryName = ingData["category"] as? String
+                    val category = try {
+                        if (categoryName != null) IngredientCategory.valueOf(categoryName) else IngredientCategory.OTHER
+                    } catch (e: Exception) {
+                        IngredientCategory.OTHER
+                    }
+
+                    // Get or create ingredient
+                    var ingredientId = recipeDao.getIngredientByName(ingName)?.ingredientId
+                    if (ingredientId == null) {
+                        ingredientId = recipeDao.insertIngredient(
+                            Ingredient(name = ingName, defaultUnit = unit, category = category)
+                        )
+                    } else {
+                        recipeDao.updateIngredient(
+                            Ingredient(ingredientId = ingredientId, name = ingName, defaultUnit = unit, category = category)
                         )
                     }
+
+                    recipeDao.insertRecipeIngredientCrossRef(
+                        RecipeIngredientCrossRef(effectiveRecipeId, ingredientId, amount, unit)
+                    )
                 }
             } catch (e: Exception) {
                 Log.e("FirebaseSync", "Error downloading recipe", e)
+            }
+        }
+
+        // Remove local recipes not present in Firebase
+        val localRecipes = recipeDao.getRecipesWithIngredients()
+        localRecipes.forEach { localRecipe ->
+            if (!firebaseRecipeIds.contains(localRecipe.recipe.recipeId)) {
+                Log.d("FirebaseSync", "Removing local recipe ${localRecipe.recipe.name} not in Firebase")
+                recipeDao.deleteRecipe(localRecipe.recipe)
             }
         }
     }
@@ -137,7 +218,7 @@ class FirebaseSyncManager(
         try {
             // Upload local weekly plans
             val localPlans = mealPlanDao.getAllWeeklyPlans()
-            Log.d("FirebaseSync", "Uploading ${'$'}{localPlans.size} weekly plans for user=$userId")
+            Log.d("FirebaseSync", "Uploading ${localPlans.size} weekly plans for user=$userId")
             localPlans.forEach { plan ->
                 uploadWeeklyPlan(userId, plan)
             }
@@ -319,15 +400,20 @@ class FirebaseSyncManager(
                     @Suppress("UNCHECKED_CAST")
                     val meals = doc.get("meals") as? List<HashMap<String, Any>>
                     meals?.forEach { mealData ->
-                        val recipeName = mealData["recipeName"] as? String ?: return@forEach
+                        val recipeId = (mealData["recipeId"] as? Number)?.toLong()
+                        val recipeName = mealData["recipeName"] as? String
                         val dayOfWeekName = mealData["dayOfWeek"] as? String ?: return@forEach
                         val mealTypeName = mealData["mealType"] as? String ?: return@forEach
                         val servings = (mealData["servings"] as? Number)?.toInt() ?: 1
                         val mealCommensals = (mealData["commensals"] as? Number)?.toInt() ?: 2
                         
-                        // Find recipe by name
+                        // Find recipe by id (preferred), fallback to name
                         val localRecipes = recipeDao.getRecipesWithIngredients()
-                        val recipe = localRecipes.find { it.recipe.name == recipeName }
+                        val recipe = when {
+                            recipeId != null -> localRecipes.find { it.recipe.recipeId == recipeId }
+                            recipeName != null -> localRecipes.find { it.recipe.name == recipeName }
+                            else -> null
+                        }
                         
                         recipe?.let { recipeWithIngredients ->
                             mealPlanDao.insertMealPlan(
@@ -402,15 +488,20 @@ class FirebaseSyncManager(
                         @Suppress("UNCHECKED_CAST")
                         val meals = doc.get("meals") as? List<HashMap<String, Any>>
                         meals?.forEach { mealData ->
-                            val recipeName = mealData["recipeName"] as? String ?: return@forEach
+                            val recipeId = (mealData["recipeId"] as? Number)?.toLong()
+                            val recipeName = mealData["recipeName"] as? String
                             val dayOfWeekName = mealData["dayOfWeek"] as? String ?: return@forEach
                             val mealTypeName = mealData["mealType"] as? String ?: return@forEach
                             val servings = (mealData["servings"] as? Number)?.toInt() ?: 1
                             val mealCommensals = (mealData["commensals"] as? Number)?.toInt() ?: 2
 
-                            // Find recipe by name
+                            // Find recipe by id (preferred), fallback to name
                             val localRecipes = recipeDao.getRecipesWithIngredients()
-                            val recipe = localRecipes.find { it.recipe.name == recipeName }
+                            val recipe = when {
+                                recipeId != null -> localRecipes.find { it.recipe.recipeId == recipeId }
+                                recipeName != null -> localRecipes.find { it.recipe.name == recipeName }
+                                else -> null
+                            }
 
                             recipe?.let { recipeWithIngredients ->
                                 mealPlanDao.insertMealPlan(

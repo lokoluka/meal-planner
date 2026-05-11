@@ -12,6 +12,7 @@ import com.lokosoft.mealplanner.data.Recipe
 import com.lokosoft.mealplanner.data.RecipeDao
 import com.lokosoft.mealplanner.data.WeeklyPlan
 import com.lokosoft.mealplanner.repository.RecipeRepository
+import com.lokosoft.mealplanner.sync.FirebaseSyncManager
 import com.lokosoft.mealplanner.ui.recipe.IngredientWithAmount
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.Dispatchers
@@ -52,11 +53,21 @@ object DemoDataManager {
     suspend fun deleteDemoData(application: Application, repository: RecipeRepository) = withContext(Dispatchers.IO) {
         val database = AppDatabase.getDatabase(application)
         val mealPlanDao = database.mealPlanDao()
+        val recipeDao = database.recipeDao()
+        val authUser = FirebaseAuth.getInstance().currentUser
+        val syncManager = FirebaseSyncManager(recipeDao = recipeDao, mealPlanDao = mealPlanDao)
         
         // Delete demo weekly plan
         val weeklyPlanName = application.getString(R.string.demo_weekly_plan_name)
         val allPlans = mealPlanDao.getAllWeeklyPlans()
         allPlans.find { it.name == weeklyPlanName }?.let { demoPlan ->
+            if (authUser != null && !authUser.isAnonymous) {
+                try {
+                    syncManager.deleteWeeklyPlanFromFirebase(authUser.uid, demoPlan)
+                } catch (e: Exception) {
+                    android.util.Log.e("DemoDataManager", "Failed to delete demo weekly plan from Firebase", e)
+                }
+            }
             mealPlanDao.deleteWeeklyPlan(demoPlan)
         }
         
@@ -66,7 +77,17 @@ object DemoDataManager {
         recipes.filter { recipeWithIngredients ->
             demoNames.contains(recipeWithIngredients.recipe.name)
         }.forEach { recipeWithIngredients ->
-            repository.deleteRecipe(recipeWithIngredients.recipe)
+            val recipe = recipeWithIngredients.recipe
+            if (authUser != null && !authUser.isAnonymous) {
+                val deletedRemote = syncManager.deleteRecipeFromFirebase(authUser.uid, recipe.recipeId)
+                if (deletedRemote) {
+                    recipeDao.deleteRecipe(recipe)
+                } else {
+                    android.util.Log.e("DemoDataManager", "Failed to delete demo recipe from Firebase, skipping local delete: ${recipe.name}")
+                }
+            } else {
+                recipeDao.deleteRecipe(recipe)
+            }
         }
     }
     

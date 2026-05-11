@@ -2,6 +2,7 @@ package com.lokosoft.mealplanner.repository
 
 import android.util.Log
 import com.lokosoft.mealplanner.data.Ingredient
+import com.lokosoft.mealplanner.data.IngredientCategory
 import com.lokosoft.mealplanner.data.IngredientAmount
 import com.lokosoft.mealplanner.data.MeasurementUnit
 import com.lokosoft.mealplanner.data.Recipe
@@ -28,15 +29,7 @@ class FirebaseRecipeRepository(
     private fun getUserId(): String? = auth.currentUser?.uid
     
     override suspend fun getAllRecipes(): List<RecipeWithIngredients> {
-        // Try to fetch from Firebase first, fall back to local cache
-        val userId = getUserId()
-        if (userId != null) {
-            try {
-                syncFromFirebase(userId)
-            } catch (e: Exception) {
-                Log.e("FirebaseRecipeRepo", "Failed to sync from Firebase, using local cache", e)
-            }
-        }
+        // Use local cache; sync is handled by SyncViewModel/FirebaseSyncManager
         return recipeDao.getRecipesWithIngredients()
     }
     
@@ -198,6 +191,7 @@ class FirebaseRecipeRepository(
                     .document(recipeId.toString())
                     .set(recipeData, SetOptions.merge())
                     .await()
+                Log.d("FirebaseRecipeRepo", "Successfully updated recipe id=$recipeId in Firebase for user=$userId")
             } catch (e: Exception) {
                 Log.e("FirebaseRecipeRepo", "Failed to sync recipe update to Firebase", e)
             }
@@ -205,22 +199,29 @@ class FirebaseRecipeRepository(
     }
     
     override suspend fun deleteRecipe(recipe: Recipe) {
-        // Delete from local database
-        recipeDao.deleteRecipe(recipe)
-        
-        // Delete from Firebase
+        // Delete from Firebase first
         val userId = getUserId()
         if (userId != null) {
             try {
+                Log.d("FirebaseRecipeRepo", "Attempting to delete recipe id=${recipe.recipeId} name=${recipe.name} for user=$userId")
                 firestore.collection("users")
                     .document(userId)
                     .collection("recipes")
                     .document(recipe.recipeId.toString())
                     .delete()
                     .await()
+                Log.d("FirebaseRecipeRepo", "Successfully deleted recipe id=${recipe.recipeId} from Firebase for user=$userId")
+                // Only delete local if Firebase delete succeeded
+                recipeDao.deleteRecipe(recipe)
+                Log.d("FirebaseRecipeRepo", "Deleted local recipe id=${recipe.recipeId} name=${recipe.name}")
             } catch (e: Exception) {
-                Log.e("FirebaseRecipeRepo", "Failed to delete recipe from Firebase", e)
+                Log.e("FirebaseRecipeRepo", "Failed to delete recipe id=${recipe.recipeId} name=${recipe.name} from Firebase for user=$userId", e)
+                // Don't delete local if Firebase delete failed
             }
+        } else {
+            // If no user, just delete local
+            Log.d("FirebaseRecipeRepo", "No authenticated user, deleting local recipe id=${recipe.recipeId} name=${recipe.name}")
+            recipeDao.deleteRecipe(recipe)
         }
     }
     
@@ -239,52 +240,75 @@ class FirebaseRecipeRepository(
                 .await()
             Log.d("FirebaseRecipeRepo", "Fetched ${snapshot.size()} recipe documents from Firestore for user=$userId")
             
+            val existingRecipes = recipeDao.getRecipesWithIngredients()
+            val recipesById = existingRecipes.associateBy { it.recipe.recipeId }
+            val recipesByName = existingRecipes.associateBy { it.recipe.name.trim().lowercase() }
+
             snapshot.documents.forEach { doc ->
                 try {
                     val firebaseRecipeId = doc.getLong("recipeId")
                     val name = doc.getString("name") ?: return@forEach
                     val instructions = doc.getString("instructions") ?: ""
                     val servings = doc.getLong("servings")?.toInt() ?: 1
-                    
-                    // Check if recipe already exists locally by recipeId (if available) or name
-                    val existingRecipes = recipeDao.getRecipesWithIngredients()
-                    val exists = if (firebaseRecipeId != null) {
-                        existingRecipes.any { it.recipe.recipeId == firebaseRecipeId }
-                    } else {
-                        existingRecipes.any { it.recipe.name == name }
+                    val nameKey = name.trim().lowercase()
+
+                    val recipeIdToUse = when {
+                        firebaseRecipeId != null -> firebaseRecipeId
+                        recipesByName.containsKey(nameKey) -> recipesByName.getValue(nameKey).recipe.recipeId
+                        else -> 0L
                     }
-                    
-                    if (!exists) {
-                        Log.d("FirebaseRecipeRepo", "Inserting recipe from Firebase: name=$name, firebaseId=$firebaseRecipeId")
-                        val recipeId = recipeDao.insertRecipe(
-                            Recipe(name = name, instructions = instructions, servings = servings)
+
+                    Log.d("FirebaseRecipeRepo", "Upserting recipe from Firebase: name=$name, firebaseId=$firebaseRecipeId, localId=$recipeIdToUse")
+
+                    val insertedId = recipeDao.insertRecipe(
+                        Recipe(
+                            recipeId = recipeIdToUse,
+                            name = name,
+                            instructions = instructions,
+                            servings = servings
                         )
-                        
-                        // Add ingredients
-                        @Suppress("UNCHECKED_CAST")
-                        val ingredients = doc.get("ingredients") as? List<HashMap<String, Any>>
-                        ingredients?.forEach { ingData ->
-                            val ingName = ingData["name"] as? String ?: return@forEach
-                            val amount = (ingData["amount"] as? Number)?.toDouble() ?: 0.0
-                            val unitName = ingData["unit"] as? String ?: "GRAM"
-                            val unit = try {
-                                MeasurementUnit.valueOf(unitName)
-                            } catch (e: Exception) {
-                                MeasurementUnit.GRAM
-                            }
-                            
-                            var ingredientId = recipeDao.getIngredientByName(ingName)?.ingredientId
-                            if (ingredientId == null) {
-                                ingredientId = recipeDao.insertIngredient(Ingredient(name = ingName))
-                            }
-                            
-                            recipeDao.insertRecipeIngredientCrossRef(
-                                RecipeIngredientCrossRef(recipeId, ingredientId, amount, unit)
+                    )
+
+                    val effectiveRecipeId = if (recipeIdToUse != 0L) recipeIdToUse else insertedId
+
+                    if (recipeIdToUse != 0L || recipesById.containsKey(effectiveRecipeId)) {
+                        recipeDao.deleteRecipeIngredients(effectiveRecipeId)
+                    }
+
+                    @Suppress("UNCHECKED_CAST")
+                    val ingredients = doc.get("ingredients") as? List<HashMap<String, Any>>
+                    ingredients?.forEach { ingData ->
+                        val ingName = ingData["name"] as? String ?: return@forEach
+                        val amount = (ingData["amount"] as? Number)?.toDouble() ?: 0.0
+                        val unitName = ingData["unit"] as? String ?: "GRAM"
+                        val unit = try {
+                            MeasurementUnit.valueOf(unitName)
+                        } catch (e: Exception) {
+                            MeasurementUnit.GRAM
+                        }
+                        val categoryName = ingData["category"] as? String
+                        val category = try {
+                            if (categoryName != null) IngredientCategory.valueOf(categoryName) else IngredientCategory.OTHER
+                        } catch (e: Exception) {
+                            IngredientCategory.OTHER
+                        }
+
+                        var ingredientId = recipeDao.getIngredientByName(ingName)?.ingredientId
+                        if (ingredientId == null) {
+                            ingredientId = recipeDao.insertIngredient(
+                                Ingredient(name = ingName, defaultUnit = unit, category = category)
+                            )
+                        } else {
+                            recipeDao.updateIngredient(
+                                Ingredient(ingredientId = ingredientId, name = ingName, defaultUnit = unit, category = category)
                             )
                         }
-                    } else {
-                        Log.d("FirebaseRecipeRepo", "Recipe already exists locally: name=$name")
+
+                        recipeDao.insertRecipeIngredientCrossRef(
+                            RecipeIngredientCrossRef(effectiveRecipeId, ingredientId, amount, unit)
+                        )
                     }
+                    Log.d("FirebaseRecipeRepo", "Upserted recipe id=$effectiveRecipeId name=$name with ${ingredients?.size ?: 0} ingredients")
                 } catch (e: Exception) {
                     Log.e("FirebaseRecipeRepo", "Error processing recipe document", e)
                 }

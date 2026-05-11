@@ -8,8 +8,10 @@ import com.lokosoft.mealplanner.data.IngredientCategory
 import com.lokosoft.mealplanner.data.MeasurementUnit
 import com.lokosoft.mealplanner.data.WeeklyPlan
 import com.google.firebase.auth.FirebaseAuth
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 data class ShoppingListItem(
@@ -39,6 +41,8 @@ class ShoppingListViewModel(application: Application) : AndroidViewModel(applica
     private val _isLoading = MutableStateFlow(false)
     val isLoading: StateFlow<Boolean> = _isLoading
 
+    private var shoppingListJob: Job? = null
+
     init {
         loadWeeklyPlans()
     }
@@ -65,21 +69,28 @@ class ShoppingListViewModel(application: Application) : AndroidViewModel(applica
     fun selectWeeklyPlan(weeklyPlanId: Long) {
         viewModelScope.launch {
             _selectedWeeklyPlanId.value = weeklyPlanId
-            loadShoppingList(weeklyPlanId)
+            startShoppingListObserver(weeklyPlanId)
         }
     }
 
     fun loadShoppingListForPlan(weeklyPlanId: Long) {
         viewModelScope.launch {
-            loadShoppingList(weeklyPlanId)
+            startShoppingListObserver(weeklyPlanId)
         }
     }
 
-    private suspend fun loadShoppingList(weeklyPlanId: Long) {
-        _isLoading.value = true
-        
-        // Get all meal plans for this week
-        val mealPlans = mealPlanDao.getMealPlansByWeeklyPlan(weeklyPlanId)
+    private fun startShoppingListObserver(weeklyPlanId: Long) {
+        shoppingListJob?.cancel()
+        shoppingListJob = viewModelScope.launch {
+            _isLoading.value = true
+            mealPlanDao.getMealPlansByWeeklyPlanFlow(weeklyPlanId).collectLatest { mealPlans ->
+                buildShoppingList(mealPlans)
+                _isLoading.value = false
+            }
+        }
+    }
+
+    private suspend fun buildShoppingList(mealPlans: List<com.lokosoft.mealplanner.data.MealPlanWithRecipe>) {
         
         // Map to accumulate ingredients with their category
         val ingredientMap = mutableMapOf<Pair<String, MeasurementUnit>, Pair<Double, IngredientCategory>>()
@@ -125,8 +136,6 @@ class ShoppingListViewModel(application: Application) : AndroidViewModel(applica
                 isChecked = itemKey in checkedItems
             )
         }.sortedWith(compareBy<ShoppingListItem> { it.isChecked }.thenBy { it.category }.thenBy { it.ingredientName })
-        
-        _isLoading.value = false
     }
     
     fun toggleItemChecked(ingredientName: String, unit: MeasurementUnit) {

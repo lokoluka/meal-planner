@@ -1,6 +1,7 @@
 package com.lokosoft.mealplanner.ui.recipe
 
 import android.app.Application
+import android.util.Log
 import androidx.lifecycle.AndroidViewModel
 import androidx.lifecycle.viewModelScope
 import com.lokosoft.mealplanner.data.AppDatabase
@@ -12,6 +13,7 @@ import com.lokosoft.mealplanner.data.RecipeWithIngredients
 import com.lokosoft.mealplanner.repository.FirebaseRecipeRepository
 import com.lokosoft.mealplanner.repository.LocalRecipeRepository
 import com.lokosoft.mealplanner.repository.RecipeRepository
+import com.lokosoft.mealplanner.sync.FirebaseSyncManager
 import com.lokosoft.mealplanner.utils.DemoDataManager
 import com.google.firebase.auth.FirebaseAuth
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -21,6 +23,11 @@ import kotlinx.coroutines.launch
 class RecipeViewModel(application: Application) : AndroidViewModel(application) {
 
     private val recipeDao = AppDatabase.getDatabase(application).recipeDao()
+    private val mealPlanDao = AppDatabase.getDatabase(application).mealPlanDao()
+    private val syncManager = FirebaseSyncManager(
+        recipeDao = recipeDao,
+        mealPlanDao = mealPlanDao
+    )
     private val auth = FirebaseAuth.getInstance()
     
     // Repository that switches based on auth state
@@ -146,7 +153,26 @@ class RecipeViewModel(application: Application) : AndroidViewModel(application) 
 
     fun deleteRecipe(recipe: Recipe) {
         viewModelScope.launch {
-            repository.deleteRecipe(recipe)
+            Log.d(
+                "RecipeViewModel",
+                "Delete requested: id=${recipe.recipeId} name=${recipe.name} authUser=${auth.currentUser?.uid}"
+            )
+            val user = auth.currentUser
+            if (user != null && !user.isAnonymous) {
+                FirebaseSyncManager.markPendingRecipeDelete(recipe.recipeId)
+                val deletedRemote = syncManager.deleteRecipeFromFirebase(user.uid, recipe.recipeId)
+                if (deletedRemote) {
+                    Log.d("RecipeViewModel", "Remote delete succeeded, deleting local recipe id=${recipe.recipeId}")
+                    recipeDao.deleteRecipe(recipe)
+                    FirebaseSyncManager.clearPendingRecipeDelete(recipe.recipeId)
+                } else {
+                    Log.e("RecipeViewModel", "Remote delete failed, skipping local delete for recipeId=${recipe.recipeId}")
+                    FirebaseSyncManager.clearPendingRecipeDelete(recipe.recipeId)
+                }
+            } else {
+                Log.d("RecipeViewModel", "Anonymous user, deleting local recipe id=${recipe.recipeId}")
+                recipeDao.deleteRecipe(recipe)
+            }
             loadRecipes()
         }
     }

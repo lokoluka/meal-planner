@@ -83,6 +83,7 @@ class DataMigrationManager(
                 try {
                     migrateRecipe(userId, recipeWithIngredients)
                     successCount++
+                    Log.d("DataMigration", "Successfully migrated recipe: ${recipeWithIngredients.recipe.name}")
                 } catch (e: Exception) {
                     Log.e("DataMigration", "Failed to migrate recipe: ${recipeWithIngredients.recipe.name}", e)
                     failureCount++
@@ -95,6 +96,7 @@ class DataMigrationManager(
                 localRecipes.forEach { recipeWithIngredients ->
                     try {
                         recipeDao.deleteRecipe(recipeWithIngredients.recipe)
+                        Log.d("DataMigration", "Cleared local recipe: ${recipeWithIngredients.recipe.name}")
                     } catch (e: Exception) {
                         Log.e("DataMigration", "Failed to clear local recipe", e)
                     }

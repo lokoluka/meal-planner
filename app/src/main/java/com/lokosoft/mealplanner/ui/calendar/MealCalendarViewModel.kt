@@ -12,8 +12,10 @@ import com.lokosoft.mealplanner.data.RecipeWithIngredients
 import com.lokosoft.mealplanner.data.WeeklyPlan
 import com.lokosoft.mealplanner.sync.FirebaseSyncManager
 import com.google.firebase.auth.FirebaseAuth
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
 class MealCalendarViewModel(application: Application) : AndroidViewModel(application) {
@@ -36,6 +38,8 @@ class MealCalendarViewModel(application: Application) : AndroidViewModel(applica
 
     private val _mealPlans = MutableStateFlow<Map<Pair<DayOfWeek, MealType>, List<MealPlanWithRecipe>>>(emptyMap())
     val mealPlans: StateFlow<Map<Pair<DayOfWeek, MealType>, List<MealPlanWithRecipe>>> = _mealPlans
+
+    private var mealPlansJob: Job? = null
 
     private val _recipes = MutableStateFlow<List<RecipeWithIngredients>>(emptyList())
     val recipes: StateFlow<List<RecipeWithIngredients>> = _recipes
@@ -164,12 +168,16 @@ class MealCalendarViewModel(application: Application) : AndroidViewModel(applica
     }
 
     private suspend fun loadMealPlansForWeek(weeklyPlanId: Long) {
-        _isLoading.value = true
-        val plans = mealPlanDao.getMealPlansByWeeklyPlan(weeklyPlanId)
-        _mealPlans.value = plans.groupBy { 
-            Pair(it.mealPlan.dayOfWeek, it.mealPlan.mealType) 
+        mealPlansJob?.cancel()
+        mealPlansJob = viewModelScope.launch {
+            _isLoading.value = true
+            mealPlanDao.getMealPlansByWeeklyPlanFlow(weeklyPlanId).collectLatest { plans ->
+                _mealPlans.value = plans.groupBy {
+                    Pair(it.mealPlan.dayOfWeek, it.mealPlan.mealType)
+                }
+                _isLoading.value = false
+            }
         }
-        _isLoading.value = false
     }
 
     private suspend fun loadRecipes() {
